@@ -1,0 +1,169 @@
+---
+title: "Synthetic Survey Data"
+author: "Yajuan Si"
+date: "2023-07-26 0913"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(polyapost)
+library(kableExtra)
+library(LaplacesDemon)
+library(sampling)
+library(pps)
+library(survey)
+library(PracTools)
+library(haven)
+library(kableExtra)
+require(parallel)
+library(gridExtra)
+
+
+g_legend = function(a.gplot){
+  tmp = ggplot_gtable(ggplot_build(a.gplot))
+  leg = which(sapply(tmp$grobs, function(x) x$name)=="guide-box")
+  legend = tmp$grobs[[leg]]
+  return(legend)
+}
+```
+
+
+```{r synrep, echo=FALSE}
+source("syn.R")
+saveRDS(syn(50, 10, 1, 1000), file = "M50R10-0623.RDS")
+saveRDS(syn(5, 10, 1, 1000), file = "M5R10-0623.RDS")
+saveRDS(syn(50, 5, 1, 1000), file = "M50R5-0623.RDS")
+saveRDS(syn(10, 10, 1, 1000), file = "M10R10-0623.RDS")
+
+source("syn_srs.R")
+saveRDS(syn(50, 10, 1, 1000), file = "SRS-M50R10-0718.RDS")
+saveRDS(syn(5, 10, 1, 1000), file = "SRS-M5R10-0718.RDS")
+saveRDS(syn(50, 5, 1, 1000), file = "SRS-M50R5-0718.RDS")
+saveRDS(syn(10, 10, 1, 1000), file = "SRS-M10R10-0718.RDS")
+```
+
+```{r result summary, echo=FALSE}
+
+M5R10 = readRDS("M5R10-0623.RDS")
+M10R10 = readRDS("M10R10-0623.RDS")
+M50R10 = readRDS("M50R10-0623.RDS")
+M50R5 = readRDS("M50R5-0623.RDS")
+
+SRSM5R10 = readRDS("SRS-M5R10-0718.RDS")
+SRSM10R10 = readRDS("SRS-M10R10-0718.RDS")
+SRSM50R10 = readRDS("SRS-M50R10-0718.RDS")
+SRSM50R5 = readRDS("SRS-M50R5-0718.RDS")
+```
+
+## Results
+
+```{r result srs, echo=FALSE}
+
+
+D0=cbind(rep("M2R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), SRSM2R10[[1]] %>% select(QEst_bias_relpct), SRSM2R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), SRSM2R10[[2]] %>% select(Contained))
+
+D1=cbind(rep("M5R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), SRSM5R10[[1]] %>% select(QEst_bias_relpct), SRSM5R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), SRSM5R10[[2]] %>% select(Contained))
+
+D2=cbind(rep("M10R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), SRSM10R10[[1]] %>% select(QEst_bias_relpct), SRSM10R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), SRSM10R10[[2]] %>% select(Contained))
+
+D3=cbind(rep("M50R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), SRSM50R10[[1]] %>% select(QEst_bias_relpct), SRSM50R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), SRSM50R10[[2]] %>% select(Contained))
+
+D4=cbind(rep("M50R5",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), SRSM50R5[[1]] %>% select(QEst_bias_relpct), SRSM50R5[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), SRSM50R5[[2]] %>% select(Contained))
+
+
+
+colnames(D0) = colnames(D1) = colnames(D2) =colnames(D3)=colnames(D4)=c("case", "method","bias","rvar","cr")
+
+srs_p_out = data.frame(rbind(D0, D1, D2,D3,D4))
+
+colnames(srs_p_out) = c("case", "method","bias","rvar","cr")
+
+xtable::xtable(srs_p_out %>% filter(method %in% c("Direct","HT", "SRSsyn")))
+
+
+srs_p_out = srs_p_out %>% filter(method %in% c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"))
+
+xtable::xtable(srs_p_out)
+
+p1=ggplot(srs_p_out %>%  mutate(method  = ordered(method, levels=c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1")), case=ordered(case, levels=c("M2R10","M5R10","M10R10","M50R10","M50R5"))), aes(x = case, y=bias, group = method, color = method, shape = method)) +  
+        geom_point() + scale_shape_manual(values=1:4) + ylim(-0.5,0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed")+
+  labs(title="", y="Relative bias (%)", x="")+
+  theme_bw()+ theme(axis.text.x = element_text(size =6), axis.title.y = element_text(size =7), legend.title = element_blank(),legend.position = "bottom")
+
+p2=ggplot(srs_p_out %>%  mutate(method  = ordered(method, levels=c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1")), case=ordered(case, levels=c("M2R10","M5R10","M10R10","M50R10","M50R5"))), aes(x = case, y=rvar, group = method, color = method, shape = method)) +  
+        geom_point() + scale_shape_manual(values=1:4) + ylim(0.95, 1.08) + 
+  geom_hline(yintercept = 1, linetype = "dashed")+
+  labs(title="", y="Ratio of est to emp variances", x="")+
+  theme_bw()+ theme(axis.text.x = element_text(size =6), axis.title.y = element_text(size =7), legend.title = element_blank())
+
+p3=ggplot(srs_p_out %>%  mutate(method  = ordered(method, levels=c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1")), case=ordered(case, levels=c("M2R10","M5R10","M10R10","M50R10","M50R5"))), aes(x = case, y=cr, group = method, color = method, shape = method)) +  
+        geom_point() + scale_shape_manual(values=1:4) + ylim(0.9, 1) + 
+  geom_hline(yintercept = 0.95, linetype = "dashed")+
+  labs(title="", y="Coverage rate", x="")+
+  theme_bw()+ theme(axis.text.x = element_text(size =6), axis.title.y = element_text(size =7), legend.title = element_blank())
+
+
+melegend = g_legend(p1)
+ggsave(grid.arrange(arrangeGrob(p1 + theme(legend.position = "none"), p2+theme(legend.position = "none"), 
+                         p3 + theme(legend.position = "none"),ncol = 1
+                         ), bottom=melegend,ncol=1),
+width = 5, height = 6, units = "in", device="pdf", file="plot/srs-0913.pdf")
+
+```
+
+
+```{r results PPS}
+###PPS
+
+D0=cbind(rep("M2R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), M2R10[[1]] %>% select(QEst_bias_relpct), M2R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), M2R10[[2]] %>% select(Contained))
+
+D1=cbind(rep("M5R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), M5R10[[1]] %>% select(QEst_bias_relpct), M5R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), M5R10[[2]] %>% select(Contained))
+
+D2=cbind(rep("M10R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), M10R10[[1]] %>% select(QEst_bias_relpct), M10R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), M10R10[[2]] %>% select(Contained))
+
+D3=cbind(rep("M50R10",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), M50R10[[1]] %>% select(QEst_bias_relpct), M50R10[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), M50R10[[2]] %>% select(Contained))
+
+D4=cbind(rep("M50R5",7), c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"), M50R5[[1]] %>% select(QEst_bias_relpct), M50R5[[1]] %>% mutate(Var_r_raw=VarEst_raw/VarComp) %>% select(Var_r_raw), M50R5[[2]] %>% select(Contained))
+
+
+
+colnames(D0) = colnames(D1) = colnames(D2) =colnames(D3)=colnames(D4)=c("case", "method","bias","rvar","cr")
+
+
+pps_p_out = data.frame(rbind(D0, D1, D2,D3,D4))
+
+colnames(pps_p_out) = c("case", "method","bias","rvar","cr")
+
+xtable::xtable(pps_p_out %>% filter(method %in% c("Direct","HT", "SRSsyn")))
+
+pps_p_out = pps_p_out %>% filter(method %in% c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1"))
+
+xtable::xtable(pps_p_out)
+
+p1=ggplot(pps_p_out %>%  mutate(method  = ordered(method, levels=c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1")), case=ordered(case, levels=c("M2R10","M5R10","M10R10","M50R10","M50R5"))), aes(x = case, y=bias, group = method, color = method, shape = method)) +  
+        geom_point() + scale_shape_manual(values=1:4) + ylim(-0.5,0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed")+
+  labs(title="", y="Relative bias (%)", x="")+
+  theme_bw()+ theme(axis.text.x = element_text(size =6), axis.title.y = element_text(size =7), legend.title = element_blank(),legend.position = "bottom")
+
+p2=ggplot(pps_p_out %>%  mutate(method  = ordered(method, levels=c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1")), case=ordered(case, levels=c("M2R10","M5R10","M10R10","M50R10","M50R5"))), aes(x = case, y=rvar, group = method, color = method, shape = method)) +  
+        geom_point() + scale_shape_manual(values=1:4) + ylim(0.95, 1.08) + 
+  geom_hline(yintercept = 1, linetype = "dashed")+
+  labs(title="", y="Ratio of est to emp variances", x="")+
+  theme_bw()+ theme(axis.text.x = element_text(size =6), axis.title.y = element_text(size =7), legend.title = element_blank())
+
+p3=ggplot(pps_p_out %>%  mutate(method  = ordered(method, levels=c("Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-1")), case=ordered(case, levels=c("M2R10","M5R10","M10R10","M50R10","M50R5"))), aes(x = case, y=cr, group = method, color = method, shape = method)) +  
+        geom_point() + scale_shape_manual(values=1:4) + ylim(0.9, 1) + 
+  geom_hline(yintercept = 0.95, linetype = "dashed")+
+  labs(title="", y="Coverage rate", x="")+
+  theme_bw()+ theme(axis.text.x = element_text(size =6), axis.title.y = element_text(size =7), legend.title = element_blank())
+
+
+melegend = g_legend(p1)
+ggsave(grid.arrange(arrangeGrob(p1 + theme(legend.position = "none"), p2+theme(legend.position = "none"), 
+                         p3 + theme(legend.position = "none"),ncol = 1
+                         ), bottom=melegend,ncol=1),
+width = 5, height = 6, units = "in", device="pdf", file="plot/pps-0913.pdf")
+```
