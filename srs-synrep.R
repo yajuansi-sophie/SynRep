@@ -1,5 +1,4 @@
 ## Simulation from PPS
-
 library(rstan)
 library(Matrix)
 library(survival)
@@ -21,18 +20,21 @@ library(gridExtra)
 
 rstan_options(auto_write = TRUE)
 options(mc.cores = parallel::detectCores())
-wlm_posterior <- stan_model('wgtlikelihood.stan')
-
+#wlm_posterior <- stan_model('wgtlikelihood.stan')
+#lm_posterior <- stan_model('likelihood.stan')
 
 acs_w = readRDS("ACS2021_w.RDS")
 
-syn_boot = function(M, R){
+syn = function(M, R){
  
+#M = 50; R = 10;  n=1000
+#M=10
+#R=10
 n=500
-  
+
 L = 1
 c <- 50
-run_num <- 1000
+run_num <- 1000 #5000
 
 runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not accounting for weights
              qbootvar = matrix(NA, run_num, 3), #variance estimate for naive estimate from sample not accounting for weights
@@ -46,27 +48,37 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
              qbar = matrix(NA, run_num, 3), #synth level Q est
              qbar_rep = matrix(NA, run_num, 3), #rep level Q est
              qbar_rep_1 = matrix(NA, run_num, 3), # R=1 rep
+             qbar_ppd_rep = matrix(NA, run_num, 3),  #ppd        
              Bm = matrix(NA, run_num, 3), #pop level Bm est
              bm = matrix(NA, run_num, 3), #synth level bm est
              Bm_rep = matrix(NA, run_num, 3), #rep level Bm est
+             Bm_ppd_rep = matrix(NA, run_num, 3), #rep ppd level Bm est
              Bm_rep_1 = matrix(NA, run_num, 3), #R=1 rep level Bm est
              vbar = matrix(NA, run_num, 3), #synth level vbar
              vbar_rep = matrix(NA, run_num, 3), #rep level vbar
              vbar_rep_1 = matrix(NA, run_num, 3), #R=1 rep vbar
+             vbar_ppd_rep = matrix(NA, run_num, 3), #rep ppd level vbar
              bm_rep = matrix(NA, run_num, 3), #rep level bm (var between qlbar's and qbar)
+             bm_ppd_rep = matrix(NA, run_num, 3), #rep ppd level bm (var between qlbar's and qbar)
              bm_rep_1 = matrix(NA, run_num, 3), #R=1 rep level bm (var between qlbar's and qbar)
              wbar = matrix(NA, run_num, 3), #mean of wl's
+             vbar = matrix(NA, run_num, 3),
+             wbar_ppd = matrix(NA, run_num, 3), #mean of ppd wl's
              Qvar = matrix(NA, run_num, 3), #pop level Qvar est
              Tm = matrix(NA, run_num, 3),  #synth level Qvar est
              Tm_rep = matrix(NA, run_num, 3), #rep level Qvar est
+             Tm_ppd_rep = matrix(NA, run_num, 3), #rep level ppd Qvar est
              Tm_rep_1 = matrix(NA, run_num, 3), #R=1 rep level Qvar est
              Tm_0 = matrix(NA, run_num, 3),  #possible negative var synthe level Qvar est
              Tm_rep_0 = matrix(NA, run_num, 3), #rep level Qvar est
+             Tm_rep_02 = matrix(NA, run_num, 3), #rep level Qvar est
+             Tm_ppd_rep_0 = matrix(NA, run_num, 3),#rep level PPD Qvar est
              Tm_rep_1_0 = matrix(NA, run_num, 3), #R=1 rep level Qvar est
              Tm_wtreg_rep = matrix(NA, run_num, 3), #rep weighted Qvar est
              result_pop = matrix(NA, run_num, 3),
              result_synth = matrix(NA, run_num, 3),
              result_rep = matrix(NA, run_num, 3),
+             result_ppd_rep = matrix(NA, run_num, 3),
              result_rep_1 = matrix(NA, run_num, 3),
              results_srs = matrix(NA, run_num, 3),
              result_ht = matrix(NA, run_num, 3),
@@ -86,7 +98,7 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
                            Y = rep(NA, N),
                            p = rep(NA, N))
  
-  beta1 = 20; beta2=50; sigma=50 #
+  beta1 = 20; beta2=50; sigma=50 #10
   
   population$X <- rbinom(N, 1, exp(-7+2*log(population$W))/(1+exp(-7+2*log(population$W)))) #depend on W
   
@@ -94,6 +106,14 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
   
   population$p <- sampling::inclusionprobabilities(population$W, n)
   population$wts <- 1/sampling::inclusionprobabilities(population$W, n)
+
+  # cor(population$Y, population$wts) #-0.1554094
+  # 
+  # summary(lm(Y ~ X, data = population))
+  # summary(lm(Y ~ X + W, data = population))
+  #  
+  # summary(lm(Y ~ X, data = orig_sample))
+  # summary(lm(Y ~ X + W, data = orig_sample)) 
   
   true_val <- c(mean(population$X), mean(population$Y), beta2)
   
@@ -127,30 +147,35 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
     runs$qsyn[j,] = c(mean(simple_synth_x), mean(simple_synth_y), lm_ori_reg$coef[2,1])
     runs$qsynvar[j,] = c(mean(simple_synth_x) *(1-mean(simple_synth_x))/n, var(simple_synth_y)/n, (lm_ori_reg$coef[2,2])^2)
  
-    ### pseudo-likelihood
-    
-    stan_data_LW <- list(
-      n = n,
-      n_pred = n,
-      y = as.vector(orig_sample$Y),  
-      x = as.vector(orig_sample$X), 
-      weights = as.vector(orig_sample$wts)
-    )
-    
-    sim_est_LW <- sampling(
-      object = wlm_posterior, 
-      data = stan_data_LW,
-      chains = 4,
-      iter = 4000, warmup = 2000, thin = 5,
-      verbose = FALSE, refresh=0
-    )
-    
-    posterior_samples <- rstan::extract(sim_est_LW, permuted = TRUE)
-    
-    
-    runs$wtreg[j,] = c(mean(posterior_samples$q_x)/n, mean(posterior_samples$q_y),mean(posterior_samples$beta2))
-    runs$wtregvar[j,] = c(var(posterior_samples$q_x)/n/n, var(posterior_samples$q_y), var(posterior_samples$beta2))
-    
+    # ### pseudo-likelihood
+    # 
+    # stan_data_LW <- list(
+    #   n = n,
+    #   n_pred = n,
+    #   y = as.vector(orig_sample$Y),  #orig_pop$Y[sample_index_mat[,i]]
+    #   x = as.vector(orig_sample$X), #orig_pop$X[sample_index_mat[,i]]
+    #   weights = as.vector(orig_sample$wts)
+    # )
+    # 
+    # sim_est_LW <- sampling(
+    #   object = wlm_posterior, 
+    #   data = stan_data_LW,
+    #   chains = 4,
+    #   iter = 4000, warmup = 2000, thin = 5,
+    #   #control = list(adapt_delta = 0.8, max_treedepth = 10),
+    #   verbose = FALSE, refresh=0
+    # )
+    # 
+    # posterior_samples <- rstan::extract(sim_est_LW, permuted = TRUE)
+    # 
+    # # plot(posterior_samples$beta2)
+    # # 
+    # # length(apply(posterior_samples$syn_x, 2, mean)) #samples
+    # #mean(posterior_samples$q_x)/n *(1-mean(posterior_samples$q_x)/n) /n
+    # 
+    # runs$wtreg[j,] = c(mean(posterior_samples$q_x)/n, mean(posterior_samples$q_y),mean(posterior_samples$beta2))
+    # runs$wtregvar[j,] = c(var(posterior_samples$q_x)/n/n, var(posterior_samples$q_y), var(posterior_samples$beta2))
+    # 
     
     ### Bootstrap
     #### 
@@ -165,6 +190,12 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
                           synth_v_beta = rep(NA,M),
                           wtreg_boot = matrix(NA, nrow = M, ncol=3), 
                           wtregvar_boot = matrix(NA, nrow = M, ncol=3),
+                          rep_ppd_y = matrix(data = NA, nrow = M, ncol = R),
+                          rep_ppd_v_y = matrix(data = NA, nrow = M, ncol = R),
+                          rep_ppd_x = matrix(data = NA, nrow = M, ncol = R),
+                          rep_ppd_v_x = matrix(data = NA, nrow = M, ncol = R),
+                          rep_ppd_beta = matrix(data = NA, nrow = M, ncol = R),
+                          rep_ppd_v_beta = matrix(data = NA, nrow = M, ncol = R),   
                           rep_y = matrix(data = NA, nrow = M, ncol = R),
                           rep_v_y = matrix(data = NA, nrow = M, ncol = R),
                           rep_x = matrix(data = NA, nrow = M, ncol = R),
@@ -191,32 +222,32 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
       wts <- (c*n)*(wts/sum(wts))
       bootsamp_size <- length(wts)
 
-      ### pseudo-likelihood
-
-      stan_data_boot <- list(
-        n = bootsamp_size,
-        n_pred = n,
-        y = unlist(subset(orig_sample[polya_ind,], select = "Y")),
-        x = unlist(subset(orig_sample[polya_ind,], select = "X")),
-        weights = wts
-      )
-
-      sim_est_boot <- sampling(
-        object = wlm_posterior,
-        data = stan_data_boot,
-        chains = 4,
-        iter = 4000, warmup = 2000, thin = 5,
-        #control = list(adapt_delta = 0.8, max_treedepth = 10),
-        verbose = FALSE, refresh=0
-      )
-
-      posterior_samples_boot <- rstan::extract(sim_est_boot, permuted = TRUE)
-
-      # plot(posterior_samples$beta2)
-
-      synth_samples$wtreg_boot[i,] = c(mean(posterior_samples_boot$q_x)/n, mean(posterior_samples_boot$q_y),mean(posterior_samples_boot$beta2))
-      synth_samples$wtregvar_boot[i,] = c(var(posterior_samples_boot$q_x)/n/n, var(posterior_samples_boot$q_y), var(posterior_samples_boot$beta2))
-
+      # ### pseudo-likelihood
+      # 
+      # stan_data_boot <- list(
+      #   n = bootsamp_size,
+      #   n_pred = n,
+      #   y = unlist(subset(orig_sample[polya_ind,], select = "Y")),
+      #   x = unlist(subset(orig_sample[polya_ind,], select = "X")),
+      #   weights = wts
+      # )
+      # 
+      # sim_est_boot <- sampling(
+      #   object = wlm_posterior,
+      #   data = stan_data_boot,
+      #   chains = 2,
+      #   iter = 3000, warmup = 1000, thin = 5,
+      #   #control = list(adapt_delta = 0.8, max_treedepth = 10),
+      #   verbose = FALSE, refresh=0
+      # )
+      # 
+      # posterior_samples_boot <- rstan::extract(sim_est_boot, permuted = TRUE)
+      # 
+      # # plot(posterior_samples$beta2)
+      # 
+      # synth_samples$wtreg_boot[i,] = c(mean(posterior_samples_boot$q_x)/n, mean(posterior_samples_boot$q_y),mean(posterior_samples_boot$beta2))
+      # synth_samples$wtregvar_boot[i,] = c(var(posterior_samples_boot$q_x)/n/n, var(posterior_samples_boot$q_y), var(posterior_samples_boot$beta2))
+      # 
 
       ###
 
@@ -257,8 +288,45 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
       synth_samples$synth_v_beta[[i]]  <- (lm_srs_reg$coef[2,2]) ^ 2
         
       
+      # ##PPD
+      # stan_data <- list(
+      #   n = n_synth,
+      #   y = unlist(subset(orig_sample[sample_synth,], select = "Y")),
+      #   x = unlist(subset(orig_sample[sample_synth,], select = "X"))
+      # )
+      # 
+      # sim_est <- sampling(
+      #   object = lm_posterior,
+      #   data = stan_data,
+      #   chains = 4,
+      #   iter = 4000, warmup = 2000, thin = 5,
+      #   # control = list(adapt_delta = 0.8, max_treedepth = 10),
+      #   verbose = FALSE, refresh=0
+      # )
+      
+      # PPD_samples <- rstan::extract(sim_est, permuted = TRUE)
+
+      
+      # plot(PPD_samples$beta2)
+      #
+      # length(apply(PPD_samples$syn_x, 2, mean)) #samples
+      
+     
+      
+      #rep_seq = dim(PPD_samples$syn_x)[1] -200/R * (R:1)
       #model synthetic dataset
       for (k in seq(1:R)) {
+    
+        # synth_samples$rep_ppd_y[i, k] <- mean(PPD_samples$syn_y[rep_seq[k],])
+        # synth_samples$rep_ppd_v_y[i, k] <- var(PPD_samples$syn_y[rep_seq[k],])/n_synth  #(mean(apply(PPD_samples$syn_y,1, var)))/n_synth
+        # 
+        # synth_samples$rep_ppd_x[i, k] <- mean(PPD_samples$syn_x[rep_seq[k],])
+        # synth_samples$rep_ppd_v_x[i, k] <- mean(PPD_samples$syn_x[rep_seq[k],])*(1-mean(PPD_samples$syn_x[rep_seq[k],]))/n_synth
+        # 
+        # synth_samples$rep_ppd_beta[i, k]  = summary(lm(PPD_samples$syn_y[rep_seq[k],] ~ PPD_samples$syn_x[rep_seq[k],]))$coef[2,1]
+        # synth_samples$rep_ppd_v_beta[i, k]  = (summary(lm(PPD_samples$syn_y[rep_seq[k],] ~ PPD_samples$syn_x[rep_seq[k],]))$coef[2,2])^2
+
+        ## Plug in without PPD
         
         rep_x = rbinom(n_synth, 1, q_l_x)
         
@@ -285,8 +353,8 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
     
  
     ##
-    runs$wtreg_rep[j,] = apply(synth_samples$wtreg_boot, 2, mean)
-    runs$wtregvar_rep[j,] = apply(synth_samples$wtregvar_boot, 2, mean)
+    # runs$wtreg_rep[j,] = apply(synth_samples$wtreg_boot, 2, mean)
+    # runs$wtregvar_rep[j,] = apply(synth_samples$wtregvar_boot, 2, mean)
     
     
     runs$Qbar[j,] <- Qbar <- apply(Q,2,mean)
@@ -296,10 +364,16 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
     runs$qbar_rep[j,] <- qbar_rep <- c(mean(synth_samples$rep_x), mean(synth_samples$rep_y), mean(synth_samples$rep_beta))
     runs$vbar_rep[j,] <- vbar_rep <- c(mean(synth_samples$rep_v_x), mean(synth_samples$rep_v_y), mean(synth_samples$rep_v_beta))
     
-    ql_bar <- cbind(apply(synth_samples$rep_x,1,mean), apply(synth_samples$rep_y,1,mean), apply(synth_samples$rep_beta,1,mean))
-    wbar <- cbind(mean(apply(synth_samples$rep_x,1,var)), mean(apply(synth_samples$rep_y,1,var)), mean(apply(synth_samples$rep_beta,1,var)))
+    runs$qbar_ppd_rep[j,] <- qbar_ppd_rep <- c(mean(synth_samples$rep_ppd_x), mean(synth_samples$rep_ppd_y), mean(synth_samples$rep_ppd_beta))
+   runs$vbar_ppd_rep[j,] <- vbar_ppd_rep <- c(mean(synth_samples$rep_ppd_v_x), mean(synth_samples$rep_ppd_v_y), mean(synth_samples$rep_ppd_v_beta))
     
-  
+    ql_bar <- cbind(apply(synth_samples$rep_x,1,mean), apply(synth_samples$rep_y,1,mean), apply(synth_samples$rep_beta,1,mean))
+    #wbar <- cbind(apply(synth_samples$rep_x,1,var), apply(synth_samples$rep_y,1,var), apply(synth_samples$rep_beta,1,var))
+    wbar <- cbind(mean(apply(synth_samples$rep_x,1,var)), mean(apply(synth_samples$rep_y,1,var)), mean(apply(synth_samples$rep_beta,1,var)))
+    ql_ppd_bar <- cbind(apply(synth_samples$rep_ppd_x,1,mean), apply(synth_samples$rep_ppd_y,1,mean), apply(synth_samples$rep_ppd_beta,1,mean))
+    wbar_ppd <- cbind(mean(apply(synth_samples$rep_ppd_x,1,var)), mean(apply(synth_samples$rep_ppd_y,1,var)), mean(apply(synth_samples$rep_ppd_beta,1,var)))
+    
+
     #R=1 
     q_rep_1 <- cbind(synth_samples$rep_x[,R], synth_samples$rep_y[,R], synth_samples$rep_beta[,R])
     v_rep_1 <- cbind(synth_samples$rep_v_x[,R], synth_samples$rep_v_y[,R], synth_samples$rep_v_beta[,R])
@@ -325,11 +399,12 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
     runs$Tm_wtreg_rep[j,tt] = if_else((1 + (1/M))*var(runs$wtreg_rep[j,tt] - synth_samples$wtreg_boot[,tt])  - runs$wtregvar_rep[j,tt] <=0, 
                                       (1 + (2/M))*runs$wtregvar_rep[j,tt],
                                       (1 + (1/M))*var(runs$wtreg_rep[j,tt] - synth_samples$wtreg_boot[,tt])  - runs$wtregvar_rep[j,tt])
+    
     #compute parameters for approx posterior from replicate sample estimates
     runs$bm_rep[j,tt] <- bm_rep <- sum((ql_bar[,tt] - qbar_rep[tt])^2)/(M-1)
   
     runs$wbar[j,tt] <- wbar[tt]
-    
+    runs$vbar[j,tt] <- vbar_rep[tt] 
     runs$Bm_rep[j,tt] <- Bm_rep <- bm_rep - vbar_rep[tt] - wbar[tt]/R
   
     runs$Tm_rep[j,tt] <- tm_rep <- if_else(((1/M) + 1)*bm_rep - vbar_rep[tt] - wbar[tt]/R <= 0, 
@@ -337,6 +412,8 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
                                           ((1/M) + 1)*bm_rep - vbar_rep[tt] - wbar[tt]/R)
     
     runs$Tm_rep_0[j,tt] <-  ((1/M) + 1)*bm_rep - vbar_rep[tt] - wbar[tt]/R
+   
+    runs$Tm_rep_02[j,tt] <-  ((1/M) + 1)*bm_rep - (1 + (1/R)) * vbar_rep[tt]
     
     #R=1
     runs$bm_rep_1[j,tt] <- bm_rep_1 <- var(q_rep_1[,tt])
@@ -345,17 +422,37 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
     runs$Tm_rep_1[j,tt] <- tm_rep_1 <- if_else(((1/M) + 1)*bm_rep_1 - 2*vbar_rep_1[tt] <= 0, 
                                               (1 + (3/M))*vbar_rep_1[tt], 
                                               ((1/M) + 1)*bm_rep_1 - 2*vbar_rep_1[tt])
+   ##ppd
+    
+    runs$bm_ppd_rep[j,tt] <- bm_ppd_rep <- sum((ql_ppd_bar[,tt] - qbar_ppd_rep[tt])^2)/(M-1)
+    
+    runs$wbar_ppd[j,tt] <- wbar_ppd[tt]
+    
+    runs$Bm_ppd_rep[j,tt] <- Bm_ppd_rep <- bm_ppd_rep - vbar_ppd_rep[tt] - wbar_ppd[tt]/R
+    
+    runs$Tm_ppd_rep[j,tt] <- tm_ppd_rep <- if_else(((1/M) + 1)*bm_ppd_rep - vbar_ppd_rep[tt] - wbar_ppd[tt]/R <= 0, 
+                                           (1 + (2/M))*vbar_ppd_rep[tt] + (1/(R*M))*wbar_ppd[tt], 
+                                           ((1/M) + 1)*bm_ppd_rep - vbar_ppd_rep[tt] - wbar_ppd[tt]/R)
+    
+    runs$Tm_ppd_rep_0[j,tt] <-  ((1/M) + 1)*bm_ppd_rep - vbar_ppd_rep[tt] - wbar_ppd[tt]/R
 
+    
   }
-
+    # ci_pop <- c(qnorm(0.025, mean = Qbar, sd = sqrt(Qvar)), qnorm(0.975, mean = Qbar, sd = sqrt(Qvar)))
+    # ci_synth <- c(qnorm(0.025, mean = qbar, sd = sqrt(tm)), qnorm(0.975, mean = qbar, sd = sqrt(tm)))
+    # ci_rep <- c(qnorm(0.025, mean = qbar_rep, sd = sqrt(tm_rep)), qnorm(0.975, mean = qbar_rep, sd = sqrt(tm_rep)))
+    # ci_rep_1 <- c(qnorm(0.025, mean = qbar_rep_1, sd = sqrt(tm_rep_1)), qnorm(0.975, mean = qbar_rep_1, sd = sqrt(tm_rep_1)))
+    # ci_srs <- c(qnorm(0.025, mean = qboot, sd = sqrt(qbootvar)), qnorm(0.975, mean = qboot, sd = sqrt(qbootvar)))
+    # ci_ht <- confint(htmean)
+    # ci_srssyn <- c(qnorm(0.025, mean = qsyn, sd = sqrt(qsynvar)), qnorm(0.975, mean = qsyn, sd = sqrt(qsynvar)))
     
     ci_pop <- cbind(qt(0.025, M-1) *sqrt(runs$Qvar[j,]) + runs$Qbar[j,], qt(0.975, M-1) *sqrt(runs$Qvar[j,]) + runs$Qbar[j,])
     ci_synth <- cbind(qt(0.025, M-1) *sqrt(runs$Tm[j,]) + runs$qbar[j,], qt(0.975, M-1) *sqrt(runs$Tm[j,]) + runs$qbar[j,])
     ci_rep <- cbind(qt(0.025, M-1) *sqrt(runs$Tm_rep[j,]) + runs$qbar_rep[j,], qt(0.975, M-1) *sqrt(runs$Tm_rep[j,]) + runs$qbar_rep[j,]) 
+    ci_ppd_rep <- cbind(qt(0.025, M-1) *sqrt(runs$Tm_ppd_rep[j,]) + runs$qbar_ppd_rep[j,], qt(0.975, M-1) *sqrt(runs$Tm_ppd_rep[j,]) + runs$qbar_ppd_rep[j,]) 
     ci_rep_1 <- cbind(qt(0.025, M-1) *sqrt(runs$Tm_rep_1[j,]) + runs$qbar_rep_1[j,], qt(0.975, M-1) *sqrt(runs$Tm_rep_1[j,]) + runs$qbar_rep_1[j,]) 
     ci_srs <- cbind(qt(0.025, M-1) *sqrt(runs$qbootvar[j,]) + runs$qboot[j,], qt(0.975, M-1) *sqrt(runs$qbootvar[j,]) + runs$qboot[j,]) 
     ci_ht <- cbind(qt(0.025, M-1) *sqrt(runs$htbootvar[j,]) + runs$htboot[j,], qt(0.975, M-1) *sqrt(runs$htbootvar[j,]) + runs$htboot[j,])
-   # ci_ht <- confint(htmean)
     ci_srssyn <- cbind(qt(0.025, M-1) *sqrt(runs$qsynvar[j,]) + runs$qsyn[j,], qt(0.975, M-1) *sqrt(runs$qsynvar[j,]) + runs$qsyn[j,]) 
     ci_wtreg <- cbind(qt(0.025, M-1) *sqrt(runs$wtregvar[j,]) + runs$wtreg[j,], qt(0.975, M-1) *sqrt(runs$wtregvar[j,]) + runs$wtreg[j,])
     ci_wtreg_rep <- cbind(qt(0.025, M-1) *sqrt(runs$Tm_wtreg_rep[j,]) + runs$wtreg_rep[j,], qt(0.975, M-1) *sqrt(runs$Tm_wtreg_rep[j,]) + runs$wtreg_rep[j,])
@@ -366,6 +463,7 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
     runs$result_pop[j, tt] <- if_else(ci_pop[tt,1] <=  true_val[tt] & true_val[tt] <= ci_pop[tt,2], "T", "F")
     runs$result_synth[j, tt] <- if_else(ci_synth[tt,1] <= true_val[tt] & true_val[tt]  <= ci_synth[tt,2], "T", "F")
     runs$result_rep[j, tt] <- if_else(ci_rep[tt,1] <= true_val[tt] & true_val[tt]  <= ci_rep[tt,2], "T", "F")
+    runs$result_ppd_rep[j, tt] <- if_else(ci_ppd_rep[tt,1] <= true_val[tt] & true_val[tt]  <= ci_ppd_rep[tt,2], "T", "F")
     runs$result_rep_1[j, tt] <- if_else(ci_rep_1[tt,1] <= true_val[tt] & true_val[tt]  <= ci_rep_1[tt,2], "T", "F")
     runs$result_srs[j, tt] <- if_else(ci_srs[tt,1] <= true_val[tt] & true_val[tt]  <= ci_srs[tt,2], "T", "F")
     runs$result_ht[j, tt] <- if_else(ci_ht[tt,1] <= true_val[tt] & true_val[tt]  <= ci_ht[tt,2], "T", "F")
@@ -378,27 +476,27 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
   }
 
   output = NULL
-  
-  
-  for (tt in 1:3){  
-    
+
+
+  for (tt in 1:3){
+
     results <- data.frame(Method = c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-R-PPD", "SynRep-1","Wtreg","Wtreg-BS"),
-                          QEst_bias = c(mean(runs$qboot[,tt]), mean(runs$htboot[,tt]), mean(runs$qsyn[,tt]), mean(runs$Qbar[,tt]), mean(runs$qbar[,tt]), mean(runs$qbar_rep[,tt]),mean(runs$qbar_rep_1[,tt]), mean(runs$wtreg[,tt]),mean(runs$wtreg_rep[,tt])) - true_val[tt],
-                          QEst_bias_relpct = (c(mean(runs$qboot[,tt]), mean(runs$htboot[,tt]), mean(runs$qsyn[,tt]), mean(runs$Qbar[,tt]), mean(runs$qbar[,tt]), mean(runs$qbar_rep[,tt]), mean(runs$qbar_rep_1[,tt]), mean(runs$wtreg[,tt]),mean(runs$wtreg_rep[,tt])) - true_val[tt])/true_val[tt] * 100,
-                          VarEst = c(mean(runs$qbootvar[,tt]), mean(runs$htbootvar[,tt]), mean(runs$qsynvar[,tt]), mean(runs$Qvar[,tt]), mean(runs$Tm[,tt]), mean(runs$Tm_rep[,tt]), mean(runs$Tm_rep_1[,tt]), mean(runs$wtregvar[,tt]), mean(runs$Tm_wtreg_rep[,tt])),
-                          VarComp = c(var(runs$qboot[,tt]), var(runs$htboot[,tt]), var(runs$qsyn[,tt]), var(runs$Qbar[,tt]), var(runs$qbar[,tt]), var(runs$qbar_rep[,tt]), var(runs$qbar_rep_1[,tt]), var(runs$wtreg[,tt]),var(runs$wtreg_rep[,tt])),
-                          Var_sd = c(sd(runs$qbootvar[,tt]), sd(runs$htbootvar[,tt]), sd(runs$qsynvar[,tt]), sd(runs$Qvar[,tt]), sd(runs$Tm[,tt]), sd(runs$Tm_rep[,tt]), sd(runs$Tm_rep_1[,tt]), sd(runs$wtregvar[,tt]), sd(runs$Tm_wtreg_rep[,tt]))
+                          QEst_bias = c(mean(runs$qboot[,tt]), mean(runs$htboot[,tt]), mean(runs$qsyn[,tt]), mean(runs$Qbar[,tt]), mean(runs$qbar[,tt]), mean(runs$qbar_rep[,tt]), mean(runs$qbar_ppd_rep[,tt]), mean(runs$qbar_rep_1[,tt]), mean(runs$wtreg[,tt]),mean(runs$wtreg_rep[,tt])) - true_val[tt],
+                          QEst_bias_relpct = (c(mean(runs$qboot[,tt]), mean(runs$htboot[,tt]), mean(runs$qsyn[,tt]), mean(runs$Qbar[,tt]), mean(runs$qbar[,tt]), mean(runs$qbar_rep[,tt]), mean(runs$qbar_ppd_rep[,tt]),mean(runs$qbar_rep_1[,tt]), mean(runs$wtreg[,tt]),mean(runs$wtreg_rep[,tt])) - true_val[tt])/true_val[tt] * 100,
+                          VarEst = c(mean(runs$qbootvar[,tt]), mean(runs$htbootvar[,tt]), mean(runs$qsynvar[,tt]), mean(runs$Qvar[,tt]), mean(runs$Tm[,tt]), mean(runs$Tm_rep[,tt]), mean(runs$Tm_ppd_rep[,tt]),mean(runs$Tm_rep_1[,tt]), mean(runs$wtregvar[,tt]), mean(runs$Tm_wtreg_rep[,tt])),
+                          VarComp = c(var(runs$qboot[,tt]), var(runs$htboot[,tt]), var(runs$qsyn[,tt]), var(runs$Qbar[,tt]), var(runs$qbar[,tt]), var(runs$qbar_rep[,tt]), var(runs$qbar_ppd_rep[,tt]),var(runs$qbar_rep_1[,tt]), var(runs$wtreg[,tt]),var(runs$wtreg_rep[,tt])),
+                          Var_sd = c(sd(runs$qbootvar[,tt]), sd(runs$htbootvar[,tt]), sd(runs$qsynvar[,tt]), sd(runs$Qvar[,tt]), sd(runs$Tm[,tt]), sd(runs$Tm_rep[,tt]), sd(runs$Tm_ppd_rep[,tt]),sd(runs$Tm_rep_1[,tt]), sd(runs$wtregvar[,tt]), sd(runs$Tm_wtreg_rep[,tt]))
     )
-    
-    
-    results = results %>% mutate(Var_r = VarEst/VarComp, 
+
+
+    results = results %>% mutate(Var_r = VarEst/VarComp,
                                  Var_r_dir = VarComp /var(runs$qboot[,tt]),
                                  Var_r_ht = VarComp /var(runs$htboot[,tt]),
                                  Var_r_srs = VarComp /var(runs$qsyn[,tt]),
-                                 VarEst_raw = c(mean(runs$qbootvar[,tt]), mean(runs$htbootvar[,tt]), mean(runs$qsynvar[,tt]), mean(runs$Qvar[,tt]), mean(runs$Tm_0[,tt]), mean(runs$Tm_rep_0[,tt]), mean(runs$Tm_rep_1_0[,tt]), mean(runs$wtregvar[,tt]), mean(runs$Tm_wtreg_rep[,tt])),
+                                 VarEst_raw = c(mean(runs$qbootvar[,tt]), mean(runs$htbootvar[,tt]), mean(runs$qsynvar[,tt]), mean(runs$Qvar[,tt]), mean(runs$Tm_0[,tt]), mean(runs$Tm_rep_0[,tt]), mean(runs$Tm_ppd_rep_0[,tt]),mean(runs$Tm_rep_1_0[,tt]), mean(runs$wtregvar[,tt]), mean(runs$Tm_wtreg_rep[,tt])),
                                  Var_r_raw = VarEst_raw/VarComp)
-    
-    
+
+
     ci_results <- data.frame(Method = c("Direct","HT", "SRSsyn", "Pseudo-Pop", "Pseudo-SRS", "SynRep-R", "SynRep-R-PPD", "SynRep-1","Wtreg","Wtreg-BS"),
                              Contained = c(mean(runs$result_srs[, tt] == "T"),
                                            mean(runs$result_ht[, tt] == "T"),
@@ -406,6 +504,7 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
                                            mean(runs$result_pop[, tt] == "T"),
                                            mean(runs$result_synth[, tt] == "T"),
                                            mean(runs$result_rep[, tt] == "T"),
+                                           mean(runs$result_ppd_rep[, tt] == "T"),
                                            mean(runs$result_rep_1[, tt] == "T"),
                                            mean(runs$result_wtreg[, tt] == "T"),
                                            mean(runs$result_wtreg_rep[, tt] == "T")),
@@ -415,18 +514,18 @@ runs <- list(qboot = matrix(NA, run_num, 3), #naive estimate from sample not acc
                                                mean(runs$result_pop[runs$Qvar[, tt] > 0, tt]== "T"),
                                                mean(runs$result_synth[runs$Tm_0[, tt] > 0, tt]== "T"),
                                                mean(runs$result_rep[runs$Tm_rep_0[, tt] > 0, tt]== "T"),
+                                               mean(runs$result_ppd_rep[runs$Tm_ppd_rep_0[, tt] > 0, tt]== "T"),
                                                mean(runs$result_rep_1[runs$Tm_rep_1_0[, tt] > 0, tt]== "T"),
                                                mean(runs$result_wtreg[runs$wtregvar[, tt] > 0, tt] == "T"),
                                                mean(runs$result_wtreg_rep[runs$Tm_wtreg_rep[, tt] >0, tt] == "T")),
-                             prop_neg =c(mean(runs$qbootvar[, tt]<0), mean(runs$htbootvar[, tt]<0), mean(runs$qsynvar[, tt]<0), mean(runs$Qvar[, tt]<0), mean(runs$Tm_0[, tt]<0), mean(runs$Tm_rep_0[, tt]<0), mean(runs$Tm_rep_1_0[, tt]<0), mean(runs$wtregvar[,tt]<0),mean(runs$Tm_wtreg_rep[,tt]<0))
+                             prop_neg =c(mean(runs$qbootvar[, tt]<0), mean(runs$htbootvar[, tt]<0), mean(runs$qsynvar[, tt]<0), mean(runs$Qvar[, tt]<0), mean(runs$Tm_0[, tt]<0), mean(runs$Tm_rep_0[, tt]<0), mean(runs$Tm_ppd_rep_0[, tt]<0),mean(runs$Tm_rep_1_0[, tt]<0), mean(runs$wtregvar[,tt]<0),mean(runs$Tm_wtreg_rep[,tt]<0))
     )
-    
+
     output[[tt]] = list(tt, results,ci_results)
-    
-    
+
+
   }
-  return(output)  
-  
+  return(output)
 
 }
 

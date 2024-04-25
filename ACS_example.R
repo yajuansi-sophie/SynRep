@@ -306,7 +306,7 @@ runs$vbar_rep[j,] <- vbar_rep <- c(mean(synth_samples$rep_v_x), mean(synth_sampl
 
 
 ql_bar <- cbind(apply(synth_samples$rep_x,1,mean), apply(synth_samples$rep_y,1,mean), apply(synth_samples$rep_beta,1,mean))
-wbar <- cbind(apply(synth_samples$rep_x,1,var), apply(synth_samples$rep_y,1,var), apply(synth_samples$rep_beta,1,var))
+wbar <- cbind(mean(apply(synth_samples$rep_x,1,var)), mean(apply(synth_samples$rep_y,1,var)), mean(apply(synth_samples$rep_beta,1,var)))
 
 
 #R=1 
